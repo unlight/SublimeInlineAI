@@ -11,6 +11,7 @@ Stream selected text or code through an OpenAI-compatible API and replace the se
 - Buffer updates run on the main thread through `sublime.set_timeout`.
 - Standard library only, no third-party dependencies.
 - One OpenAI-compatible endpoint, configurable globally or per project.
+- Extension-specific default instructions and per-extension history.
 - Global, user, and project-specific settings.
 - API keys from environment variables.
 - `Escape` cancels an active stream.
@@ -69,7 +70,7 @@ Package defaults are in `Packages/InlineAI/InlineAI.sublime-settings`. User over
 
 1. Select text or code.
 2. Press `ctrl+enter`.
-3. Enter an instruction, for example `Refactor to async` or `Fix grammar`.
+3. The panel is prefilled with the last instruction for this extension in the current session, or with the extension default. Edit it or replace it.
 4. Press `Enter`.
 5. The selection is replaced as tokens arrive.
 6. Press `Escape` to cancel an active stream.
@@ -148,7 +149,12 @@ Project values override user and package values.
     "temperature": 0.2,
     "request_timeout": 120,
     "pump_interval_ms": 33,
-    "system_prompt": "You are an automated inline text and code transformation tool..."
+    "system_prompt": "You are an automated inline text and code transformation tool...",
+    "instruction_defaults": {
+        "ts,js,mts,mjs,jsx,tsx": "Refactor the selected code for clarity and maintainability without changing its behavior.",
+        "md,markdown": "Improve the documentation: clarify the wording, fix grammar, and preserve the original meaning and structure.",
+        "default": "Improve the selected text while preserving its meaning and formatting."
+    }
 }
 ```
 
@@ -161,6 +167,15 @@ Fields:
 - `request_timeout`: timeout for one socket operation, in seconds.
 - `pump_interval_ms`: UI update interval, in milliseconds.
 - `system_prompt`: system prompt.
+- `instruction_defaults`: object mapping comma-separated extensions to default instruction text. Must contain a `default` key.
+
+### Instruction defaults and history
+
+`instruction_defaults` maps comma-separated file extensions to the text that prefills the instruction panel. Matching is case-insensitive. The `default` key is required and is used when no extension group matches. A file without an extension uses the `default` group.
+
+The last submitted instruction is kept in memory per exact extension for the current Sublime Text session. The next time the instruction panel opens for the same extension, that text is used instead of the default. Restarting Sublime Text clears the history.
+
+History is per exact extension. Defaults can group several extensions.
 
 ### User overrides
 
@@ -200,6 +215,8 @@ In `.sublime-project`:
 `settings.inline_ai` must be an object. Arrays are rejected.
 
 Keys that are absent from the project settings are inherited from the global settings.
+
+`instruction_defaults` can also be overridden per project. The value replaces the global object as a whole.
 
 ### Environment variable API keys
 

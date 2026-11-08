@@ -20,11 +20,13 @@ REQUIRED_SETTINGS = (
     "request_timeout",
     "pump_interval_ms",
     "system_prompt",
+    "instruction_defaults",
 )
 
 
 _SESSIONS = {}
 _LAST_WRITE_END = [0]
+_LAST_INSTRUCTIONS = {}
 
 
 def _project_overrides(view):
@@ -41,6 +43,35 @@ def _project_overrides(view):
     if isinstance(overrides, list):
         raise RuntimeError("settings.inline_ai must be an object, not a list")
     return overrides if isinstance(overrides, dict) else {}
+
+
+def _normalize_instruction_defaults(value):
+    if not isinstance(value, dict):
+        raise RuntimeError("instruction_defaults must be an object")
+
+    default = None
+    extensions = {}
+    for key, instruction in value.items():
+        if not isinstance(instruction, str):
+            raise RuntimeError("instruction_defaults values must be strings")
+        group = str(key).strip().lower()
+        if group == "default":
+            default = str(instruction)
+            continue
+        if not group:
+            continue
+        for extension in group.split(","):
+            extension = extension.strip().lower()
+            if extension:
+                if extension in extensions:
+                    raise RuntimeError(
+                        "duplicate extension in instruction_defaults: " + extension
+                    )
+                extensions[extension] = str(instruction)
+
+    if default is None:
+        raise RuntimeError("instruction_defaults must contain a 'default' key")
+    return {"default": default, "extensions": extensions}
 
 
 def _load_config(view):
@@ -68,6 +99,9 @@ def _load_config(view):
         raise RuntimeError("model must be non-empty")
     config["api_key"] = str(config["api_key"]).strip()
     config["system_prompt"] = str(config["system_prompt"])
+    config["instruction_defaults"] = _normalize_instruction_defaults(
+        config["instruction_defaults"]
+    )
 
     try:
         config["temperature"] = float(config["temperature"])
@@ -81,6 +115,30 @@ def _load_config(view):
     if config["request_timeout"] <= 0 or config["pump_interval_ms"] <= 0:
         raise RuntimeError("request_timeout and pump_interval_ms must be positive")
     return config
+
+
+def _file_extension(view):
+    file_name = view.file_name()
+    if not file_name:
+        return "default"
+    extension = os.path.splitext(file_name)[1].lstrip(".").lower()
+    return extension or "default"
+
+
+def _save_last_instruction(extension, instruction):
+    _LAST_INSTRUCTIONS[extension] = instruction
+
+
+def _default_instruction(config, extension):
+    defaults = config["instruction_defaults"]
+    return defaults["extensions"].get(extension, defaults["default"])
+
+
+def _initial_instruction(extension, config):
+    saved = _LAST_INSTRUCTIONS.get(extension)
+    if saved:
+        return saved
+    return _default_instruction(config, extension)
 
 
 def _resolve_api_key(value):
@@ -474,11 +532,14 @@ class InlineAICommand(sublime_plugin.TextCommand):
         if existing is not None:
             existing.cancel()
 
+        extension = _file_extension(self.view)
+        initial_instruction = _initial_instruction(extension, config)
+
         window.show_input_panel(
             "Inline AI instruction:",
-            "",
+            initial_instruction,
             lambda instruction: self._on_instruction(
-                region, source_text, instruction, change_count, config
+                region, source_text, instruction, change_count, config, extension
             ),
             None,
             None,
@@ -490,7 +551,7 @@ class InlineAICommand(sublime_plugin.TextCommand):
                 return sublime.Region(region.begin(), region.end())
         return None
 
-    def _on_instruction(self, region, source_text, instruction, change_count, config):
+    def _on_instruction(self, region, source_text, instruction, change_count, config, extension):
         instruction = instruction.strip()
         if not instruction:
             sublime.status_message("Inline AI: instruction is empty")
@@ -500,6 +561,8 @@ class InlineAICommand(sublime_plugin.TextCommand):
         if self.view.change_count() != change_count:
             sublime.status_message("Inline AI: buffer changed; try again")
             return
+
+        _save_last_instruction(extension, instruction)
 
         existing = _SESSIONS.get(self.view.id())
         if existing is not None:
