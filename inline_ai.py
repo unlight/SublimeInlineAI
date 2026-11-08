@@ -1,6 +1,6 @@
-# Inline AI для Sublime Text 4.
-# Установка: скопируйте файл в Packages/User/inline_ai.py
-# Keymap: скопируйте Default.sublime-keymap в Packages/User/
+# Inline AI for Sublime Text 4.
+# Install: copy this file to Packages/User/inline_ai.py
+# Keymap: copy Default.sublime-keymap to Packages/User/
 
 import json
 import queue
@@ -14,13 +14,13 @@ import sublime
 import sublime_plugin
 
 
-# --- Настройки -------------------------------------------------------------
-API_URL = "http://localhost:11434/v1/chat/completions"  # OpenAI-совместимый endpoint Ollama
-API_KEY = "bearer-token-if-needed"                      # Оставьте как есть, если авторизация не нужна
+# --- Configuration ---------------------------------------------------------
+API_URL = "http://localhost:11434/v1/chat/completions"  # Ollama OpenAI-compatible endpoint
+API_KEY = "bearer-token-if-needed"                      # Leave as-is when no auth is required
 MODEL_NAME = "llama3"
 TEMPERATURE = 0.2
-REQUEST_TIMEOUT = 120                                   # Секунды на одну сокетную операцию
-PUMP_INTERVAL_MS = 33                                   # Интервал обновления UI (~30 fps)
+REQUEST_TIMEOUT = 120                                   # Seconds per socket operation
+PUMP_INTERVAL_MS = 33                                   # UI update interval (~30 fps)
 
 SYSTEM_PROMPT = (
     "You are an automated inline text and code transformation tool. "
