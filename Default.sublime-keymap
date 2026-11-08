@@ -1,0 +1,16 @@
+[
+    {
+        "keys": ["ctrl+enter"],
+        "command": "inline_ai",
+        "context": [
+            { "key": "selection_empty", "operator": "equal", "operand": false }
+        ]
+    },
+    {
+        "keys": ["escape"],
+        "command": "inline_ai_cancel",
+        "context": [
+            { "key": "setting.inline_ai_streaming", "operator": "equal", "operand": true }
+        ]
+    }
+]
