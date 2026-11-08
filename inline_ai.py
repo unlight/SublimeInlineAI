@@ -1,6 +1,7 @@
 # Inline AI for Sublime Text 4.
-# Install: copy this file and InlineAI.sublime-settings to Packages/User/
-# Keymap: copy Default.sublime-keymap to Packages/User/
+# Install: symlink this folder to Packages/InlineAI
+# Keymap: loaded from this package automatically
+# User overrides: Packages/User/InlineAI.sublime-settings
 # Project overrides: .sublime-project -> settings.inline_ai
 
 import json
