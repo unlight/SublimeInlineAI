@@ -409,6 +409,22 @@ class InlineAIWriteCommand(sublime_plugin.TextCommand):
     _LAST_WRITE_END[0] = begin + inserted
 
 
+def _indicator_html(text):
+  return """
+  <body id="inline-ai-indicator">
+    <style>
+      .inline-ai-indicator {{
+        font-size: 0.9em;
+        font-style: italic;
+        opacity: 0.75;
+        padding: 2px 6px;
+      }}
+    </style>
+    <div class="inline-ai-indicator">{}</div>
+  </body>
+  """.format(text)
+
+
 class _StreamSession:
   def __init__(self, view, region, source_text, instruction, change_count, config):
     self.view = view
@@ -424,12 +440,16 @@ class _StreamSession:
     self.pump_interval_ms = config["pump_interval_ms"]
     self.cancel_event = threading.Event()
     self.output_queue = queue.Queue()
+    self.phantom_set = None
 
   def start(self):
     try:
       _SESSIONS[self.view_id] = self
       self.view.settings().set("inline_ai_streaming", True)
       self.view.set_status("inline_ai", "Inline AI: generating...")
+
+      self.phantom_set = sublime.PhantomSet(self.view, "inline_ai")
+      self._update_indicator()
 
       sublime.set_timeout(self._pump, self.pump_interval_ms)
 
@@ -471,7 +491,44 @@ class _StreamSession:
     selection = self.view.sel()
     selection.clear()
     selection.add(sublime.Region(self.cursor))
-    self.view.show(self.cursor, False)
+    self.view.show(self.cursor, True)
+    self._update_indicator()
+
+  def _update_indicator(self):
+    if self.phantom_set is None:
+      return
+    if self.started and self.cursor is not None:
+      region = sublime.Region(self.region.begin(), self.cursor)
+      phantom_region = sublime.Region(self.cursor, self.cursor)
+      generated = self.cursor - self.region.begin()
+      text = (
+        "Inline AI: rewriting selected text... {} chars. "
+        "Press Escape to cancel."
+      ).format(generated)
+    else:
+      region = self.region
+      phantom_region = sublime.Region(self.region.begin(), self.region.begin())
+      text = (
+        "Inline AI: selected text will be rewritten. Waiting for the model... "
+        "Press Escape to cancel."
+      )
+    self.view.add_regions(
+      "inline_ai_target",
+      [region],
+      "region.yellowish",
+      "",
+      sublime.DRAW_SQUIGGLY_UNDERLINE,
+    )
+    self.phantom_set.update([
+      sublime.Phantom(phantom_region, _indicator_html(text), sublime.LAYOUT_BELOW)
+    ])
+
+  def _clear_indicator(self):
+    if not self.view.is_valid():
+      return
+    self.view.erase_regions("inline_ai_target")
+    if self.phantom_set is not None:
+      self.phantom_set.update([])
 
   def _pump(self):
     if self.finished:
@@ -520,6 +577,7 @@ class _StreamSession:
     _SESSIONS.pop(self.view_id, None)
 
     if self.view.is_valid():
+      self._clear_indicator()
       self.view.settings().erase("inline_ai_streaming")
       self.view.erase_status("inline_ai")
       if (self.started and self.cursor is not None and

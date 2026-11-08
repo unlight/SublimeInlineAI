@@ -27,8 +27,29 @@ class FakeRegion:
     return self.a == self.b
 
 
+class FakePhantom:
+  def __init__(self, region, content, layout):
+    self.region = region
+    self.content = content
+    self.layout = layout
+
+
+class FakePhantomSet:
+  def __init__(self, view, key):
+    self.view = view
+    self.key = key
+    self.phantoms = []
+
+  def update(self, phantoms):
+    self.phantoms = list(phantoms)
+
+
 sublime = types.ModuleType("sublime")
 sublime.Region = FakeRegion
+sublime.Phantom = FakePhantom
+sublime.PhantomSet = FakePhantomSet
+sublime.LAYOUT_BELOW = 1
+sublime.DRAW_SQUIGGLY_UNDERLINE = 2
 sublime.status_message = lambda message: None
 sublime.set_timeout = lambda callback, delay=0: None
 sys.modules["sublime"] = sublime
@@ -87,6 +108,33 @@ class FakeBufferView:
     begin = region.begin()
     end = region.end()
     self.text = self.text[:begin] + text + self.text[end:]
+
+
+class FakeIndicatorView:
+  def __init__(self):
+    self.regions = {}
+    self.change_count_value = 0
+    self.valid = True
+
+  def id(self):
+    return 1
+
+  def change_count(self):
+    return self.change_count_value
+
+  def is_valid(self):
+    return self.valid
+
+  def add_regions(self, key, regions, scope, icon, flags):
+    self.regions[key] = {
+      "regions": regions,
+      "scope": scope,
+      "icon": icon,
+      "flags": flags,
+    }
+
+  def erase_regions(self, key):
+    self.regions.pop(key, None)
 
 
 class FakeEvent:
@@ -423,6 +471,61 @@ class TestInstructionHistory(PluginTestCase):
     expected = os.path.normcase(os.path.normpath("/repo/src/../src/app.ts"))
     self.assertEqual(plugin._file_key(view), expected)
     self.assertIsNone(plugin._file_key(FakeView()))
+
+
+class TestIndicator(PluginTestCase):
+  def make_session(self, region=None):
+    if region is None:
+      region = FakeRegion(0, 5)
+    view = FakeIndicatorView()
+    session = plugin._StreamSession(
+      view, region, "source", "instruction", 0, self.config()
+    )
+    session.phantom_set = FakePhantomSet(view, "inline_ai")
+    return view, session
+
+  def test_pending_indicator(self):
+    view, session = self.make_session()
+    session._update_indicator()
+    self.assertIn("inline_ai_target", view.regions)
+    self.assertEqual(len(session.phantom_set.phantoms), 1)
+    content = session.phantom_set.phantoms[0].content
+    self.assertIn("will be rewritten", content)
+    self.assertIn("Press Escape", content)
+    phantom_region = session.phantom_set.phantoms[0].region
+    self.assertEqual(phantom_region.begin(), 0)
+    self.assertEqual(phantom_region.end(), 0)
+
+  def test_streaming_indicator(self):
+    view, session = self.make_session(FakeRegion(5, 10))
+    session.started = True
+    session.cursor = 12
+    session._update_indicator()
+    content = session.phantom_set.phantoms[0].content
+    self.assertIn("rewriting selected text", content)
+    self.assertIn("7 chars", content)
+    self.assertIn("Press Escape", content)
+    phantom_region = session.phantom_set.phantoms[0].region
+    self.assertEqual(phantom_region.begin(), 12)
+    self.assertEqual(phantom_region.end(), 12)
+    highlight = view.regions["inline_ai_target"]["regions"][0]
+    self.assertEqual(highlight.begin(), 5)
+    self.assertEqual(highlight.end(), 12)
+    self.assertEqual(
+      view.regions["inline_ai_target"]["scope"], "region.yellowish"
+    )
+
+  def test_clear_indicator(self):
+    view, session = self.make_session()
+    session._update_indicator()
+    session._clear_indicator()
+    self.assertNotIn("inline_ai_target", view.regions)
+    self.assertEqual(session.phantom_set.phantoms, [])
+
+  def test_indicator_html(self):
+    html = plugin._indicator_html("hello")
+    self.assertIn("hello", html)
+    self.assertIn("inline-ai-indicator", html)
 
 
 class TestWriteCommand(PluginTestCase):

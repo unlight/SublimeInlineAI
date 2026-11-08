@@ -7,6 +7,7 @@ Stream selected text or code through an OpenAI-compatible API and replace the se
 - Works with any selected text or code in the active view.
 - `ctrl+enter` opens an instruction panel.
 - Streaming replacement with a typing effect.
+- Inline progress hint and target highlight while streaming.
 - Network I/O and SSE parsing run on a background thread.
 - Buffer updates run on the main thread through `sublime.set_timeout`.
 - Standard library only, no third-party dependencies.
@@ -72,7 +73,7 @@ Package defaults are in `Packages/InlineAI/InlineAI.sublime-settings`. User over
 2. Press `ctrl+enter`.
 3. The panel is prefilled with the last instruction for this file, the closest known file, or the extension default. Edit it or replace it.
 4. Press `Enter`.
-5. The selection is replaced as tokens arrive.
+5. The selection is replaced as tokens arrive. An inline hint below the target shows progress and the Escape shortcut.
 6. Press `Escape` to cancel an active stream.
 7. The generated region is selected when streaming completes.
 
