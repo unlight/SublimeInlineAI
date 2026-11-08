@@ -1,0 +1,330 @@
+# Inline AI for Sublime Text 4
+
+Stream selected text or code through an OpenAI-compatible API and replace the selection as tokens arrive. The editor stays responsive because network I/O and SSE parsing run on a background thread.
+
+## Features
+
+- Works with any selected text or code in the active view.
+- `ctrl+enter` opens an instruction panel.
+- Streaming replacement with a typing effect.
+- Network I/O and SSE parsing run on a background thread.
+- Buffer updates run on the main thread through `sublime.set_timeout`.
+- Standard library only, no third-party dependencies.
+- Multiple models with sequential fallback.
+- Global, user, and project-specific settings.
+- API keys from environment variables.
+- `Escape` cancels an active stream.
+- Detailed errors in the status bar and Sublime Text console.
+
+## Requirements
+
+- Sublime Text 4.
+- Embedded Python 3.3 or 3.8.
+- An OpenAI-compatible SSE endpoint, for example Ollama, llama.cpp, LM Studio, or DeepSeek.
+- No additional Python packages.
+
+## Installation
+
+### Symlink
+
+```bash
+ln -s /path/to/SublimeInlineAI ~/.config/sublime-text/Packages/InlineAI
+```
+
+Restart Sublime Text after creating the symlink.
+
+### Copy
+
+Copy these files to `Packages/User/`:
+
+- `inline_ai.py`
+- `InlineAI.sublime-settings`
+- `Default.sublime-keymap`
+
+Do not overwrite an existing `Packages/User/Default.sublime-keymap`. Add the entries to the existing file.
+
+When installed as a separate package in `Packages/InlineAI/`, `InlineAI.sublime-settings` is the package default. User overrides belong in `Packages/User/InlineAI.sublime-settings`.
+
+## Usage
+
+1. Select text or code.
+2. Press `ctrl+enter`.
+3. Enter an instruction, for example `Refactor to async` or `Fix grammar`.
+4. Press `Enter`.
+5. The selection is replaced as tokens arrive.
+6. Press `Escape` to cancel an active stream.
+7. The generated region is selected when streaming completes.
+
+## Key bindings
+
+`Default.sublime-keymap`:
+
+```json
+[
+    {
+        "keys": ["ctrl+enter"],
+        "command": "inline_ai",
+        "context": [
+            { "key": "selection_empty", "operator": "equal", "operand": false }
+        ]
+    },
+    {
+        "keys": ["escape"],
+        "command": "inline_ai_cancel",
+        "context": [
+            { "key": "setting.inline_ai_streaming", "operator": "equal", "operand": true }
+        ]
+    }
+]
+```
+
+`ctrl+enter` triggers only when the selection is not empty. `Escape` triggers only while a stream is active.
+
+### Conflict with an existing `ctrl+enter` binding
+
+The user keymap has priority over package keymaps. If `ctrl+enter` is already bound, for example to `goto_file`, the plugin will not receive the event.
+
+Option 1. Restrict the existing binding to empty selections. Keep any other contexts that are already present:
+
+```json
+{
+    "keys": ["ctrl+enter"],
+    "command": "goto_file",
+    "context": [
+        { "key": "selection_empty", "operator": "equal", "operand": true }
+    ]
+}
+```
+
+Option 2. Add the plugin binding to `Packages/User/Default.sublime-keymap` after the existing binding:
+
+```json
+{
+    "keys": ["ctrl+enter"],
+    "command": "inline_ai",
+    "context": [
+        { "key": "selection_empty", "operator": "equal", "operand": false }
+    ]
+}
+```
+
+## Settings
+
+Priority:
+
+1. `.sublime-project` key `settings.inline_ai`
+2. `Packages/User/InlineAI.sublime-settings`
+3. `Packages/InlineAI/InlineAI.sublime-settings`
+
+Project values override user and package values.
+
+### Model format
+
+```json
+{
+    "models": [
+        {
+            "api_url": "http://localhost:11434/v1/chat/completions",
+            "api_key": "",
+            "model": "llama3"
+        },
+        {
+            "api_url": "https://api.deepseek.com/v1/chat/completions",
+            "api_key": "{env:DEEPSEEK_API_KEY}",
+            "model": "deepseek-chat"
+        }
+    ],
+    "temperature": 0.2,
+    "request_timeout": 120,
+    "pump_interval_ms": 33,
+    "system_prompt": "You are an automated inline text and code transformation tool..."
+}
+```
+
+Fields:
+
+- `models`: non-empty array of model objects.
+- `api_url`: full `http` or `https` URL to `/v1/chat/completions`.
+- `api_key`: optional. A literal value or `{env:NAME}`.
+- `model`: model name.
+- `temperature`: generation temperature.
+- `request_timeout`: timeout for one socket operation, in seconds.
+- `pump_interval_ms`: UI update interval, in milliseconds.
+- `system_prompt`: system prompt.
+
+### User overrides
+
+Create `Packages/User/InlineAI.sublime-settings` and specify only the keys you want to override:
+
+```json
+{
+    "models": [
+        {
+            "api_url": "https://api.deepseek.com/v1/chat/completions",
+            "api_key": "{env:DEEPSEEK_API_KEY}",
+            "model": "deepseek-chat"
+        }
+    ],
+    "temperature": 0.1
+}
+```
+
+Keys that are absent from the user file are inherited from the package `InlineAI.sublime-settings`.
+
+The `models` array is replaced as a whole. It is not merged with the package array by index.
+
+### Project settings
+
+In `.sublime-project`:
+
+```json
+{
+    "folders": [
+        { "path": "." }
+    ],
+    "settings": {
+        "inline_ai": {
+            "models": [
+                {
+                    "api_url": "http://localhost:11434/v1/chat/completions",
+                    "model": "qwen2.5-coder"
+                }
+            ],
+            "temperature": 0.1,
+            "system_prompt": "Return only the final result."
+        }
+    }
+}
+```
+
+To override only the models, use the shorthand form:
+
+```json
+{
+    "settings": {
+        "inline_ai": [
+            {
+                "api_url": "http://localhost:11434/v1/chat/completions",
+                "model": "qwen2.5-coder"
+            }
+        ]
+    }
+}
+```
+
+All other keys are inherited from the global settings.
+
+### Environment variable API keys
+
+`api_key` supports this format:
+
+```json
+"api_key": "{env:DEEPSEEK_API_KEY}"
+```
+
+Rules:
+
+- The variable is read when a request to that specific model is attempted.
+- If the variable is not set, the model is skipped, the error is logged to the console, and the plugin tries the next model.
+- An empty variable means no `Authorization` header.
+- The variable must be present in the environment of the Sublime Text process. If Sublime Text is launched from a GUI, `~/.bashrc` may not apply. Export the variable before launching Sublime Text, or set it in the desktop environment.
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."
+```
+
+Restart Sublime Text after changing the variable.
+
+Errors:
+
+- `api_key environment variable DEEPSEEK_API_KEY is not set`
+- `invalid api_key environment reference`
+- `empty environment variable name in api_key`
+
+## Model fallback
+
+Models are tried in order.
+
+The plugin moves to the next model when:
+
+- the connection cannot be established;
+- the server returns an HTTP error;
+- a timeout occurs;
+- the API returns an error object;
+- the model finishes the stream without a single token.
+
+If a model has already emitted at least one token and then fails, the next model is not started. This prevents two different responses from being mixed in the same buffer. The partial result remains in the editor.
+
+If every model fails, the status bar shows:
+
+```text
+Inline AI error: all models failed: ...
+```
+
+Full errors for each model are written to the Sublime Text console:
+
+```text
+[Inline AI] llama3 @ http://localhost:11434/v1/chat/completions: connection failed
+```
+
+Open the console with `View` > `Show Console`.
+
+## Cancellation and undo
+
+- `Escape` during a stream stops generation.
+- The partial result is not removed.
+- The stream is written in batches, so a full rollback may require several `ctrl+z` presses.
+- The generated region is selected after a successful completion.
+
+## Error handling
+
+The plugin reports these conditions in the status bar:
+
+- empty selection;
+- empty instruction;
+- read-only view;
+- no active window;
+- external buffer changes during streaming;
+- missing or invalid settings;
+- HTTP, connection, timeout, and JSON errors;
+- the view is closed during streaming;
+- the model returns no content.
+
+If the buffer changes externally, the stream stops to avoid corrupting the text.
+
+## Project layout
+
+```text
+inline_ai.py                    main plugin
+InlineAI.sublime-settings       default package settings
+Default.sublime-keymap          key bindings
+README.md                       documentation
+```
+
+## Verification
+
+```bash
+python3 -m py_compile inline_ai.py
+python3 -m json.tool InlineAI.sublime-settings
+python3 -m json.tool Default.sublime-keymap
+```
+
+After restarting Sublime Text:
+
+1. Select text.
+2. Press `ctrl+enter`.
+3. Enter an instruction.
+4. Check the stream and the status bar.
+
+## Dependencies
+
+None. Only standard Python modules are used:
+
+- `json`
+- `os`
+- `queue`
+- `socket`
+- `threading`
+- `urllib.error`
+- `urllib.parse`
+- `urllib.request`

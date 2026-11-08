@@ -1,10 +1,3 @@
-# Inline AI for Sublime Text 4.
-# Install: symlink this folder to Packages/InlineAI
-# Keymap: loaded from this package automatically
-# User overrides: Packages/User/InlineAI.sublime-settings
-# Project overrides: .sublime-project -> settings.inline_ai
-# API keys: literal value or {env:VARIABLE_NAME}
-
 import json
 import os
 import queue
