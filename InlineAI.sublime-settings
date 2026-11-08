@@ -1,14 +1,14 @@
 {
-    "api_url": "http://localhost:11434/v1/chat/completions",
-    "api_key": "",
-    "model": "llama3",
-    "temperature": 0.2,
-    "request_timeout": 120,
-    "pump_interval_ms": 33,
-    "system_prompt": "You are an automated inline text and code transformation tool. Modify the provided text or code based strictly on the user's instructions. Return ONLY the final modified result. Do NOT wrap the output in markdown code blocks (like ```python or ```text) unless explicitly asked by the user. Do NOT include any greetings, explanations, previews, or conversational filler. Your output must be ready to directly overwrite the original selection.",
-    "instruction_defaults": {
-        "ts,js,mts,mjs,jsx,tsx": "Refactor the selected code for clarity and maintainability without changing its behavior.",
-        "md,markdown": "Improve the documentation: clarify the wording, fix grammar, and preserve the original meaning and structure.",
-        "default": "Improve the selected text while preserving its meaning and formatting."
-    }
+  "api_url": "http://localhost:11434/v1/chat/completions",
+  "api_key": "",
+  "model": "llama3",
+  "temperature": 0.2,
+  "request_timeout": 120,
+  "pump_interval_ms": 33,
+  "system_prompt": "You are an automated inline text and code transformation tool. Modify the provided text or code based strictly on the user's instructions. Return ONLY the final modified result. Do NOT wrap the output in markdown code blocks (like ```python or ```text) unless explicitly asked by the user. Do NOT include any greetings, explanations, previews, or conversational filler. Your output must be ready to directly overwrite the original selection.",
+  "instruction_defaults": {
+    "ts,js,mts,mjs,jsx,tsx": "Refactor the selected code for clarity and maintainability without changing its behavior.",
+    "md,markdown": "Improve the documentation: clarify the wording, fix grammar, and preserve the original meaning and structure.",
+    "default": "Improve the selected text while preserving its meaning and formatting."
+  }
 }

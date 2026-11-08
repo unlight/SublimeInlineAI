@@ -82,20 +82,20 @@ Package defaults are in `Packages/InlineAI/InlineAI.sublime-settings`. User over
 
 ```json
 [
-    {
-        "keys": ["ctrl+enter"],
-        "command": "inline_ai",
-        "context": [
-            { "key": "selection_empty", "operator": "equal", "operand": false }
-        ]
-    },
-    {
-        "keys": ["escape"],
-        "command": "inline_ai_cancel",
-        "context": [
-            { "key": "setting.inline_ai_streaming", "operator": "equal", "operand": true }
-        ]
-    }
+  {
+    "keys": ["ctrl+enter"],
+    "command": "inline_ai",
+    "context": [
+      { "key": "selection_empty", "operator": "equal", "operand": false }
+    ]
+  },
+  {
+    "keys": ["escape"],
+    "command": "inline_ai_cancel",
+    "context": [
+      { "key": "setting.inline_ai_streaming", "operator": "equal", "operand": true }
+    ]
+  }
 ]
 ```
 
@@ -109,11 +109,11 @@ Option 1. Restrict the existing binding to empty selections. Keep any other cont
 
 ```json
 {
-    "keys": ["ctrl+enter"],
-    "command": "goto_file",
-    "context": [
-        { "key": "selection_empty", "operator": "equal", "operand": true }
-    ]
+  "keys": ["ctrl+enter"],
+  "command": "goto_file",
+  "context": [
+    { "key": "selection_empty", "operator": "equal", "operand": true }
+  ]
 }
 ```
 
@@ -121,11 +121,11 @@ Option 2. Add the plugin binding to `Packages/User/Default.sublime-keymap` after
 
 ```json
 {
-    "keys": ["ctrl+enter"],
-    "command": "inline_ai",
-    "context": [
-        { "key": "selection_empty", "operator": "equal", "operand": false }
-    ]
+  "keys": ["ctrl+enter"],
+  "command": "inline_ai",
+  "context": [
+    { "key": "selection_empty", "operator": "equal", "operand": false }
+  ]
 }
 ```
 
@@ -143,18 +143,18 @@ Project values override user and package values.
 
 ```json
 {
-    "api_url": "http://localhost:11434/v1/chat/completions",
-    "api_key": "",
-    "model": "llama3",
-    "temperature": 0.2,
-    "request_timeout": 120,
-    "pump_interval_ms": 33,
-    "system_prompt": "You are an automated inline text and code transformation tool...",
-    "instruction_defaults": {
-        "ts,js,mts,mjs,jsx,tsx": "Refactor the selected code for clarity and maintainability without changing its behavior.",
-        "md,markdown": "Improve the documentation: clarify the wording, fix grammar, and preserve the original meaning and structure.",
-        "default": "Improve the selected text while preserving its meaning and formatting."
-    }
+  "api_url": "http://localhost:11434/v1/chat/completions",
+  "api_key": "",
+  "model": "llama3",
+  "temperature": 0.2,
+  "request_timeout": 120,
+  "pump_interval_ms": 33,
+  "system_prompt": "You are an automated inline text and code transformation tool...",
+  "instruction_defaults": {
+    "ts,js,mts,mjs,jsx,tsx": "Refactor the selected code for clarity and maintainability without changing its behavior.",
+    "md,markdown": "Improve the documentation: clarify the wording, fix grammar, and preserve the original meaning and structure.",
+    "default": "Improve the selected text while preserving its meaning and formatting."
+  }
 }
 ```
 
@@ -187,10 +187,10 @@ Create `Packages/User/InlineAI.sublime-settings` and specify only the keys you w
 
 ```json
 {
-    "api_url": "https://api.deepseek.com/v1/chat/completions",
-    "api_key": "{env:DEEPSEEK_API_KEY}",
-    "model": "deepseek-chat",
-    "temperature": 0.1
+  "api_url": "https://api.deepseek.com/v1/chat/completions",
+  "api_key": "{env:DEEPSEEK_API_KEY}",
+  "model": "deepseek-chat",
+  "temperature": 0.1
 }
 ```
 
@@ -202,17 +202,17 @@ In `.sublime-project`:
 
 ```json
 {
-    "folders": [
-        { "path": "." }
-    ],
-    "settings": {
-        "inline_ai": {
-            "api_url": "http://localhost:11434/v1/chat/completions",
-            "model": "qwen2.5-coder",
-            "temperature": 0.1,
-            "system_prompt": "Return only the final result."
-        }
+  "folders": [
+    { "path": "." }
+  ],
+  "settings": {
+    "inline_ai": {
+      "api_url": "http://localhost:11434/v1/chat/completions",
+      "model": "qwen2.5-coder",
+      "temperature": 0.1,
+      "system_prompt": "Return only the final result."
     }
+  }
 }
 ```
 
