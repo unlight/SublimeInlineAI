@@ -10,7 +10,7 @@ Stream selected text or code through an OpenAI-compatible API and replace the se
 - Network I/O and SSE parsing run on a background thread.
 - Buffer updates run on the main thread through `sublime.set_timeout`.
 - Standard library only, no third-party dependencies.
-- Multiple models with sequential fallback.
+- One OpenAI-compatible endpoint, configurable globally or per project.
 - Global, user, and project-specific settings.
 - API keys from environment variables.
 - `Escape` cancels an active stream.
@@ -138,22 +138,13 @@ Priority:
 
 Project values override user and package values.
 
-### Model format
+### API configuration
 
 ```json
 {
-    "models": [
-        {
-            "api_url": "http://localhost:11434/v1/chat/completions",
-            "api_key": "",
-            "model": "llama3"
-        },
-        {
-            "api_url": "https://api.deepseek.com/v1/chat/completions",
-            "api_key": "{env:DEEPSEEK_API_KEY}",
-            "model": "deepseek-chat"
-        }
-    ],
+    "api_url": "http://localhost:11434/v1/chat/completions",
+    "api_key": "",
+    "model": "llama3",
     "temperature": 0.2,
     "request_timeout": 120,
     "pump_interval_ms": 33,
@@ -163,7 +154,6 @@ Project values override user and package values.
 
 Fields:
 
-- `models`: non-empty array of model objects.
 - `api_url`: full `http` or `https` URL to `/v1/chat/completions`.
 - `api_key`: optional. A literal value or `{env:NAME}`.
 - `model`: model name.
@@ -178,20 +168,14 @@ Create `Packages/User/InlineAI.sublime-settings` and specify only the keys you w
 
 ```json
 {
-    "models": [
-        {
-            "api_url": "https://api.deepseek.com/v1/chat/completions",
-            "api_key": "{env:DEEPSEEK_API_KEY}",
-            "model": "deepseek-chat"
-        }
-    ],
+    "api_url": "https://api.deepseek.com/v1/chat/completions",
+    "api_key": "{env:DEEPSEEK_API_KEY}",
+    "model": "deepseek-chat",
     "temperature": 0.1
 }
 ```
 
 Keys that are absent from the user file are inherited from the package `InlineAI.sublime-settings`.
-
-The `models` array is replaced as a whole. It is not merged with the package array by index.
 
 ### Project settings
 
@@ -204,12 +188,8 @@ In `.sublime-project`:
     ],
     "settings": {
         "inline_ai": {
-            "models": [
-                {
-                    "api_url": "http://localhost:11434/v1/chat/completions",
-                    "model": "qwen2.5-coder"
-                }
-            ],
+            "api_url": "http://localhost:11434/v1/chat/completions",
+            "model": "qwen2.5-coder",
             "temperature": 0.1,
             "system_prompt": "Return only the final result."
         }
@@ -217,22 +197,9 @@ In `.sublime-project`:
 }
 ```
 
-To override only the models, use the shorthand form:
+`settings.inline_ai` must be an object. Arrays are rejected.
 
-```json
-{
-    "settings": {
-        "inline_ai": [
-            {
-                "api_url": "http://localhost:11434/v1/chat/completions",
-                "model": "qwen2.5-coder"
-            }
-        ]
-    }
-}
-```
-
-All other keys are inherited from the global settings.
+Keys that are absent from the project settings are inherited from the global settings.
 
 ### Environment variable API keys
 
@@ -244,8 +211,8 @@ All other keys are inherited from the global settings.
 
 Rules:
 
-- The variable is read when a request to that specific model is attempted.
-- If the variable is not set, the model is skipped, the error is logged to the console, and the plugin tries the next model.
+- The variable is read when a request is attempted.
+- If the variable is not set, the request fails with an error in the status bar and console.
 - An empty variable means no `Authorization` header.
 - The variable must be present in the environment of the Sublime Text process. If Sublime Text is launched from a GUI, `~/.bashrc` may not apply. Export the variable before launching Sublime Text, or set it in the desktop environment.
 
@@ -260,34 +227,6 @@ Errors:
 - `api_key environment variable DEEPSEEK_API_KEY is not set`
 - `invalid api_key environment reference`
 - `empty environment variable name in api_key`
-
-## Model fallback
-
-Models are tried in order.
-
-The plugin moves to the next model when:
-
-- the connection cannot be established;
-- the server returns an HTTP error;
-- a timeout occurs;
-- the API returns an error object;
-- the model finishes the stream without a single token.
-
-If a model has already emitted at least one token and then fails, the next model is not started. This prevents two different responses from being mixed in the same buffer. The partial result remains in the editor.
-
-If every model fails, the status bar shows:
-
-```text
-Inline AI error: all models failed: ...
-```
-
-Full errors for each model are written to the Sublime Text console:
-
-```text
-[Inline AI] llama3 @ http://localhost:11434/v1/chat/completions: connection failed
-```
-
-Open the console with `View` > `Show Console`.
 
 ## Cancellation and undo
 
@@ -311,6 +250,8 @@ The plugin reports these conditions in the status bar:
 - the model returns no content.
 
 If the buffer changes externally, the stream stops to avoid corrupting the text.
+
+Full error details are written to the Sublime Text console. Open it with `View` > `Show Console`.
 
 ## Project layout
 

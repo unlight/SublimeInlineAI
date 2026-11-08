@@ -1,11 +1,7 @@
 {
-    "models": [
-        {
-            "api_url": "http://localhost:11434/v1/chat/completions",
-            "api_key": "",
-            "model": "llama3"
-        }
-    ],
+    "api_url": "http://localhost:11434/v1/chat/completions",
+    "api_key": "",
+    "model": "llama3",
     "temperature": 0.2,
     "request_timeout": 120,
     "pump_interval_ms": 33,

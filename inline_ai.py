@@ -14,7 +14,8 @@ import sublime_plugin
 SETTINGS_FILE = "InlineAI.sublime-settings"
 CONFIG_KEY = "inline_ai"
 REQUIRED_SETTINGS = (
-    "models",
+    "api_url",
+    "model",
     "temperature",
     "request_timeout",
     "pump_interval_ms",
@@ -38,48 +39,34 @@ def _project_overrides(view):
         return {}
     overrides = project_settings.get(CONFIG_KEY)
     if isinstance(overrides, list):
-        return {"models": overrides}
+        raise RuntimeError("settings.inline_ai must be an object, not a list")
     return overrides if isinstance(overrides, dict) else {}
-
-
-def _normalize_models(models):
-    if not isinstance(models, list) or not models:
-        raise RuntimeError("models must be a non-empty list")
-
-    normalized = []
-    for index, item in enumerate(models):
-        if not isinstance(item, dict):
-            raise RuntimeError("models[{}] must be an object".format(index))
-        api_url = str(item.get("api_url") or "").strip()
-        model = str(item.get("model") or "").strip()
-        api_key = str(item.get("api_key") or "").strip()
-        parsed = urllib.parse.urlparse(api_url)
-        if not api_url or parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise RuntimeError("models[{}].api_url is invalid".format(index))
-        if not model:
-            raise RuntimeError("models[{}].model must be non-empty".format(index))
-        normalized.append({
-            "api_url": api_url,
-            "api_key": api_key,
-            "model": model,
-        })
-    return normalized
 
 
 def _load_config(view):
     settings = sublime.load_settings(SETTINGS_FILE)
     config = {key: settings.get(key) for key in REQUIRED_SETTINGS}
+    config["api_key"] = settings.get("api_key") or ""
 
     overrides = _project_overrides(view)
     for key in REQUIRED_SETTINGS:
         if key in overrides:
             config[key] = overrides[key]
+    if "api_key" in overrides:
+        config["api_key"] = overrides["api_key"] or ""
 
     missing = [key for key in REQUIRED_SETTINGS if config.get(key) is None]
     if missing:
         raise RuntimeError("missing settings: " + ", ".join(missing))
 
-    config["models"] = _normalize_models(config["models"])
+    config["api_url"] = str(config["api_url"]).strip()
+    parsed = urllib.parse.urlparse(config["api_url"])
+    if not config["api_url"] or parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise RuntimeError("api_url is invalid")
+    config["model"] = str(config["model"]).strip()
+    if not config["model"]:
+        raise RuntimeError("model must be non-empty")
+    config["api_key"] = str(config["api_key"]).strip()
     config["system_prompt"] = str(config["system_prompt"])
 
     try:
@@ -96,10 +83,6 @@ def _load_config(view):
     return config
 
 
-def _model_label(model):
-    return "{} @ {}".format(model["model"], model["api_url"])
-
-
 def _resolve_api_key(value):
     if value.startswith("{env:"):
         if not value.endswith("}"):
@@ -114,14 +97,14 @@ def _resolve_api_key(value):
     return value
 
 
-def _build_headers(model):
+def _build_headers(config):
     headers = {
         "Content-Type": "application/json",
         "Accept": "text/event-stream",
         "Cache-Control": "no-cache",
         "User-Agent": "SublimeInlineAI/1.0",
     }
-    api_key = _resolve_api_key(model["api_key"])
+    api_key = _resolve_api_key(config["api_key"])
     if api_key:
         token = api_key
         if not token.lower().startswith("bearer "):
@@ -130,21 +113,21 @@ def _build_headers(model):
     return headers
 
 
-def _open_request(config, model, request):
-    host = (urllib.parse.urlparse(model["api_url"]).hostname or "").lower()
+def _open_request(config, request):
+    host = (urllib.parse.urlparse(config["api_url"]).hostname or "").lower()
     if host in ("localhost", "127.0.0.1", "::1"):
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         return opener.open(request, timeout=config["request_timeout"])
     return urllib.request.urlopen(request, timeout=config["request_timeout"])
 
 
-def _build_payload(config, model, instruction, source_text):
+def _build_payload(config, instruction, source_text):
     user_content = (
         "INSTRUCTION:\n" + instruction +
         "\n\nTEXT OR CODE TO TRANSFORM:\n" + source_text
     )
     return {
-        "model": model["model"],
+        "model": config["model"],
         "stream": True,
         "temperature": config["temperature"],
         "messages": [
@@ -261,26 +244,27 @@ def _emit_non_stream_body(response, output_queue):
     output_queue.put(("delta", content))
 
 
-def _stream_one_model(config, model, payload, output_queue, cancel_event):
-    received_content = False
+def _stream_worker(config, instruction, source_text, output_queue, cancel_event):
+    error_message = None
     response = None
     try:
+        payload = _build_payload(config, instruction, source_text)
         request = urllib.request.Request(
-            model["api_url"],
+            config["api_url"],
             data=json.dumps(payload).encode("utf-8"),
-            headers=_build_headers(model),
+            headers=_build_headers(config),
         )
-        response = _open_request(config, model, request)
+        response = _open_request(config, request)
         content_type = response.headers.get("Content-Type", "") or ""
         if "application/json" in content_type and "text/event-stream" not in content_type:
             _emit_non_stream_body(response, output_queue)
-            return True, None
+            return
 
         for data in _iter_sse_data(response, cancel_event):
             if cancel_event.is_set():
-                return received_content, None
+                return
             if data == "[DONE]":
-                return received_content, None
+                return
             try:
                 obj = json.loads(data)
             except ValueError:
@@ -291,54 +275,22 @@ def _stream_one_model(config, model, payload, output_queue, cancel_event):
             content = _extract_content(obj)
             if content:
                 output_queue.put(("delta", content))
-                received_content = True
-        return received_content, None
     except Exception as exc:
-        if cancel_event.is_set():
-            return received_content, None
-        return received_content, _describe_exception(
-            exc, config["request_timeout"]
-        )
+        if not cancel_event.is_set():
+            error_message = _describe_exception(exc, config["request_timeout"])
     finally:
         if response is not None:
             try:
                 response.close()
             except Exception:
                 pass
-
-
-def _stream_worker(config, instruction, source_text, output_queue, cancel_event):
-    failures = []
-    for model in config["models"]:
-        if cancel_event.is_set():
-            return
-
-        payload = _build_payload(config, model, instruction, source_text)
-        received, error = _stream_one_model(
-            config, model, payload, output_queue, cancel_event
-        )
-        if cancel_event.is_set():
-            return
-
-        if received:
-            if error:
-                output_queue.put(("error", _model_label(model) + ": " + error))
-            else:
-                output_queue.put(("done", None))
-            return
-
-        if error is None:
-            error = "model returned no content"
-        failures.append((_model_label(model), error))
-        print("[Inline AI] {}: {}".format(_model_label(model), error))
-
-    if cancel_event.is_set():
-        return
-    if failures:
-        summary = "; ".join("{}: {}".format(label, error) for label, error in failures)
-        output_queue.put(("error", "all models failed: " + summary))
-    else:
-        output_queue.put(("error", "no models configured"))
+        if error_message:
+            print("[Inline AI] {} @ {}: {}".format(
+                config["model"], config["api_url"], error_message
+            ))
+            output_queue.put(("error", error_message))
+        else:
+            output_queue.put(("done", None))
 
 
 def _run_write(view, begin, end, text):
