@@ -464,6 +464,7 @@ def _preview_html(hint, generated_text):
         padding: 2px 6px;
       }}
       .inline-ai-preview {{
+        font-size: 0.9em;
         font-family: monospace;
         white-space: pre-wrap;
         margin-top: 4px;
