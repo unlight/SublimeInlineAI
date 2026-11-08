@@ -1,5 +1,5 @@
 # Inline AI for Sublime Text 4.
-# Install: copy this file to Packages/User/inline_ai.py
+# Install: copy this file and InlineAI.sublime-settings to Packages/User/
 # Keymap: copy Default.sublime-keymap to Packages/User/
 
 import json
@@ -14,63 +14,84 @@ import sublime
 import sublime_plugin
 
 
-# --- Configuration ---------------------------------------------------------
-API_URL = "http://localhost:11434/v1/chat/completions"  # Ollama OpenAI-compatible endpoint
-API_KEY = "bearer-token-if-needed"                      # Leave as-is when no auth is required
-MODEL_NAME = "llama3"
-TEMPERATURE = 0.2
-REQUEST_TIMEOUT = 120                                   # Seconds per socket operation
-PUMP_INTERVAL_MS = 33                                   # UI update interval (~30 fps)
-
-SYSTEM_PROMPT = (
-    "You are an automated inline text and code transformation tool. "
-    "Modify the provided text or code based strictly on the user's instructions. "
-    "Return ONLY the final modified result. Do NOT wrap the output in markdown code blocks "
-    "(like ```python or ```text) unless explicitly asked by the user. "
-    "Do NOT include any greetings, explanations, previews, or conversational filler. "
-    "Your output must be ready to directly overwrite the original selection."
+SETTINGS_FILE = "InlineAI.sublime-settings"
+REQUIRED_SETTINGS = (
+    "api_url",
+    "model",
+    "temperature",
+    "request_timeout",
+    "pump_interval_ms",
+    "system_prompt",
 )
-# ---------------------------------------------------------------------------
 
 
 _SESSIONS = {}
 _LAST_WRITE_END = [0]
 
 
-def _build_headers():
+def _load_config():
+    settings = sublime.load_settings(SETTINGS_FILE)
+    missing = [key for key in REQUIRED_SETTINGS if settings.get(key) is None]
+    if missing:
+        raise RuntimeError(
+            "missing settings in {}: {}".format(SETTINGS_FILE, ", ".join(missing))
+        )
+
+    config = {key: settings.get(key) for key in REQUIRED_SETTINGS}
+    config["api_key"] = str(settings.get("api_key") or "").strip()
+    config["api_url"] = str(config["api_url"]).strip()
+    config["model"] = str(config["model"]).strip()
+    config["system_prompt"] = str(config["system_prompt"])
+
+    try:
+        config["temperature"] = float(config["temperature"])
+        config["request_timeout"] = int(config["request_timeout"])
+        config["pump_interval_ms"] = int(config["pump_interval_ms"])
+    except (TypeError, ValueError):
+        raise RuntimeError("invalid numeric setting in " + SETTINGS_FILE)
+
+    if not config["api_url"] or not config["model"]:
+        raise RuntimeError("api_url and model must be non-empty")
+    if config["request_timeout"] <= 0 or config["pump_interval_ms"] <= 0:
+        raise RuntimeError("request_timeout and pump_interval_ms must be positive")
+    return config
+
+
+def _build_headers(config):
     headers = {
         "Content-Type": "application/json",
         "Accept": "text/event-stream",
         "Cache-Control": "no-cache",
         "User-Agent": "SublimeInlineAI/1.0",
     }
-    if API_KEY and API_KEY != "bearer-token-if-needed":
-        token = API_KEY.strip()
+    api_key = config["api_key"]
+    if api_key:
+        token = api_key
         if not token.lower().startswith("bearer "):
             token = "Bearer " + token
         headers["Authorization"] = token
     return headers
 
 
-def _open_request(request):
-    host = (urllib.parse.urlparse(API_URL).hostname or "").lower()
+def _open_request(config, request):
+    host = (urllib.parse.urlparse(config["api_url"]).hostname or "").lower()
     if host in ("localhost", "127.0.0.1", "::1"):
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        return opener.open(request, timeout=REQUEST_TIMEOUT)
-    return urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT)
+        return opener.open(request, timeout=config["request_timeout"])
+    return urllib.request.urlopen(request, timeout=config["request_timeout"])
 
 
-def _build_payload(instruction, source_text):
+def _build_payload(config, instruction, source_text):
     user_content = (
         "INSTRUCTION:\n" + instruction +
         "\n\nTEXT OR CODE TO TRANSFORM:\n" + source_text
     )
     return {
-        "model": MODEL_NAME,
+        "model": config["model"],
         "stream": True,
-        "temperature": TEMPERATURE,
+        "temperature": config["temperature"],
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": config["system_prompt"]},
             {"role": "user", "content": user_content},
         ],
     }
@@ -139,7 +160,13 @@ def _extract_api_error(obj):
     return None
 
 
-def _describe_exception(exc):
+def _timeout_message(timeout):
+    if timeout is None:
+        return "request timed out"
+    return "request timed out after {}s".format(timeout)
+
+
+def _describe_exception(exc, timeout=None):
     if isinstance(exc, urllib.error.HTTPError):
         try:
             body = exc.read().decode("utf-8", "replace").strip()
@@ -153,10 +180,12 @@ def _describe_exception(exc):
     if isinstance(exc, urllib.error.URLError):
         reason = exc.reason
         if isinstance(reason, socket.timeout):
-            return "request timed out after {}s".format(REQUEST_TIMEOUT)
+            return _timeout_message(timeout)
         return "connection failed: {}".format(reason)
     if isinstance(exc, socket.timeout):
-        return "request timed out after {}s".format(REQUEST_TIMEOUT)
+        return _timeout_message(timeout)
+    if isinstance(exc, RuntimeError):
+        return str(exc) or "runtime error"
     return "{}: {}".format(type(exc).__name__, exc)
 
 
@@ -175,16 +204,16 @@ def _emit_non_stream_body(response, output_queue):
     output_queue.put(("delta", content))
 
 
-def _stream_worker(payload, headers, output_queue, cancel_event):
+def _stream_worker(config, payload, headers, output_queue, cancel_event):
     error_message = None
     response = None
     try:
         request = urllib.request.Request(
-            API_URL,
+            config["api_url"],
             data=json.dumps(payload).encode("utf-8"),
             headers=headers,
         )
-        response = _open_request(request)
+        response = _open_request(config, request)
         content_type = response.headers.get("Content-Type", "") or ""
         if "application/json" in content_type and "text/event-stream" not in content_type:
             _emit_non_stream_body(response, output_queue)
@@ -207,7 +236,7 @@ def _stream_worker(payload, headers, output_queue, cancel_event):
                 output_queue.put(("delta", content))
     except Exception as exc:
         if not cancel_event.is_set():
-            error_message = _describe_exception(exc)
+            error_message = _describe_exception(exc, config["request_timeout"])
     finally:
         if response is not None:
             try:
@@ -239,34 +268,45 @@ class InlineAIWriteCommand(sublime_plugin.TextCommand):
 
 
 class _StreamSession:
-    def __init__(self, view, region, source_text, instruction, change_count):
+    def __init__(self, view, region, source_text, instruction, change_count, config):
         self.view = view
         self.view_id = view.id()
         self.region = region
         self.source_text = source_text
         self.instruction = instruction
+        self.config = config
         self.cursor = None
         self.started = False
         self.finished = False
         self.expected_change_count = change_count
+        self.pump_interval_ms = config["pump_interval_ms"]
         self.cancel_event = threading.Event()
         self.output_queue = queue.Queue()
 
     def start(self):
-        _SESSIONS[self.view_id] = self
-        self.view.settings().set("inline_ai_streaming", True)
-        self.view.set_status("inline_ai", "Inline AI: generating...")
+        try:
+            _SESSIONS[self.view_id] = self
+            self.view.settings().set("inline_ai_streaming", True)
+            self.view.set_status("inline_ai", "Inline AI: generating...")
 
-        sublime.set_timeout(self._pump, PUMP_INTERVAL_MS)
+            sublime.set_timeout(self._pump, self.pump_interval_ms)
 
-        payload = _build_payload(self.instruction, self.source_text)
-        headers = _build_headers()
-        thread = threading.Thread(
-            target=_stream_worker,
-            args=(payload, headers, self.output_queue, self.cancel_event),
-        )
-        thread.daemon = True
-        thread.start()
+            payload = _build_payload(self.config, self.instruction, self.source_text)
+            headers = _build_headers(self.config)
+            thread = threading.Thread(
+                target=_stream_worker,
+                args=(
+                    self.config,
+                    payload,
+                    headers,
+                    self.output_queue,
+                    self.cancel_event,
+                ),
+            )
+            thread.daemon = True
+            thread.start()
+        except Exception as exc:
+            self._finish(error=_describe_exception(exc))
 
     def cancel(self):
         self.cancel_event.set()
@@ -330,7 +370,7 @@ class _StreamSession:
             self._finish()
             return
 
-        sublime.set_timeout(self._pump, PUMP_INTERVAL_MS)
+        sublime.set_timeout(self._pump, self.pump_interval_ms)
 
     def _finish(self, error=None, cancelled=False):
         if self.finished:
@@ -382,6 +422,12 @@ class InlineAICommand(sublime_plugin.TextCommand):
             sublime.status_message("Inline AI: no active window")
             return
 
+        try:
+            config = _load_config()
+        except Exception as exc:
+            sublime.status_message("Inline AI error: " + _describe_exception(exc))
+            return
+
         existing = _SESSIONS.get(self.view.id())
         if existing is not None:
             existing.cancel()
@@ -390,7 +436,7 @@ class InlineAICommand(sublime_plugin.TextCommand):
             "Inline AI instruction:",
             "",
             lambda instruction: self._on_instruction(
-                region, source_text, instruction, change_count
+                region, source_text, instruction, change_count, config
             ),
             None,
             None,
@@ -402,7 +448,7 @@ class InlineAICommand(sublime_plugin.TextCommand):
                 return sublime.Region(region.begin(), region.end())
         return None
 
-    def _on_instruction(self, region, source_text, instruction, change_count):
+    def _on_instruction(self, region, source_text, instruction, change_count, config):
         instruction = instruction.strip()
         if not instruction:
             sublime.status_message("Inline AI: instruction is empty")
@@ -418,12 +464,9 @@ class InlineAICommand(sublime_plugin.TextCommand):
             existing.cancel()
 
         session = _StreamSession(
-            self.view, region, source_text, instruction, change_count
+            self.view, region, source_text, instruction, change_count, config
         )
-        try:
-            session.start()
-        except Exception as exc:
-            session._finish(error=_describe_exception(exc))
+        session.start()
 
 
 class InlineAICancelCommand(sublime_plugin.TextCommand):
