@@ -72,6 +72,23 @@ class FakeView:
     return self._file_name
 
 
+class FakeBufferView:
+  def __init__(self, text=""):
+    self.text = text
+
+  def size(self):
+    return len(self.text)
+
+  def insert(self, edit, point, text):
+    self.text = self.text[:point] + text + self.text[point:]
+    return len(text)
+
+  def replace(self, edit, region, text):
+    begin = region.begin()
+    end = region.end()
+    self.text = self.text[:begin] + text + self.text[end:]
+
+
 class FakeEvent:
   def is_set(self):
     return False
@@ -124,6 +141,7 @@ class PluginTestCase(unittest.TestCase):
     sublime.load_settings = lambda name: FakeSettings(self.settings)
     plugin._LAST_INSTRUCTIONS.clear()
     del plugin._LAST_INSTRUCTION_ORDER[:]
+    plugin._LAST_WRITE_END[0] = 0
     self.original_open_request = plugin._open_request
 
   def tearDown(self):
@@ -405,6 +423,46 @@ class TestInstructionHistory(PluginTestCase):
     expected = os.path.normcase(os.path.normpath("/repo/src/../src/app.ts"))
     self.assertEqual(plugin._file_key(view), expected)
     self.assertIsNone(plugin._file_key(FakeView()))
+
+
+class TestWriteCommand(PluginTestCase):
+  def test_streaming_appends_in_order(self):
+    view = FakeBufferView("old text")
+    command = plugin.InlineAIWriteCommand()
+    command.view = view
+    edit = object()
+
+    command.run(edit, 0, len("old text"), "hello ")
+    self.assertEqual(plugin._LAST_WRITE_END[0], 6)
+    self.assertEqual(view.text, "hello ")
+
+    command.run(
+      edit,
+      plugin._LAST_WRITE_END[0],
+      plugin._LAST_WRITE_END[0],
+      "world",
+    )
+    self.assertEqual(plugin._LAST_WRITE_END[0], 11)
+    self.assertEqual(view.text, "hello world")
+
+    command.run(
+      edit,
+      plugin._LAST_WRITE_END[0],
+      plugin._LAST_WRITE_END[0],
+      "!",
+    )
+    self.assertEqual(plugin._LAST_WRITE_END[0], 12)
+    self.assertEqual(view.text, "hello world!")
+
+  def test_replace_updates_end(self):
+    view = FakeBufferView("abcdef")
+    command = plugin.InlineAIWriteCommand()
+    command.view = view
+    edit = object()
+
+    command.run(edit, 1, 5, "XY")
+    self.assertEqual(view.text, "aXYf")
+    self.assertEqual(plugin._LAST_WRITE_END[0], 3)
 
 
 class TestStreamWorker(PluginTestCase):

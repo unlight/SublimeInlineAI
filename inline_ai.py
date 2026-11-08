@@ -401,10 +401,12 @@ def _run_write(view, begin, end, text):
 class InlineAIWriteCommand(sublime_plugin.TextCommand):
   def run(self, edit, begin=0, end=0, text=""):
     if end > begin:
-      new_end = self.view.replace(edit, sublime.Region(begin, end), text)
+      size_before = self.view.size()
+      self.view.replace(edit, sublime.Region(begin, end), text)
+      inserted = self.view.size() - size_before + (end - begin)
     else:
-      new_end = self.view.insert(edit, begin, text)
-    _LAST_WRITE_END[0] = new_end if new_end is not None else begin + len(text)
+      inserted = self.view.insert(edit, begin, text)
+    _LAST_WRITE_END[0] = begin + inserted
 
 
 class _StreamSession:
