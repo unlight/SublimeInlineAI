@@ -8,6 +8,7 @@ Stream selected text or code through an OpenAI-compatible API and replace the se
 - `ctrl+enter` opens an instruction panel.
 - Streaming replacement with a typing effect.
 - Inline progress hint and target highlight while streaming.
+- Single-step undo in preview and final modes.
 - Network I/O and SSE parsing run on a background thread.
 - Buffer updates run on the main thread through `sublime.set_timeout`.
 - Standard library only, no third-party dependencies.
@@ -73,7 +74,7 @@ Package defaults are in `Packages/InlineAI/InlineAI.sublime-settings`. User over
 2. Press `ctrl+enter`.
 3. The panel is prefilled with the last instruction for this file, the closest known file, or the extension default. Edit it or replace it.
 4. Press `Enter`.
-5. The selection is replaced as tokens arrive. An inline hint below the target shows progress and the Escape shortcut.
+5. The replacement is applied according to `stream_mode`: an inline preview (default), a progress hint, or direct buffer streaming.
 6. Press `Escape` to cancel an active stream.
 7. The generated region is selected when streaming completes.
 
@@ -150,6 +151,7 @@ Project values override user and package values.
   "temperature": 0.2,
   "request_timeout": 120,
   "pump_interval_ms": 33,
+  "stream_mode": "preview",
   "system_prompt": "You are an automated inline text and code transformation tool...",
   "instruction_defaults": {
     "ts,js,mts,mjs,jsx,tsx": "Refactor the selected code for clarity and maintainability without changing its behavior.",
@@ -167,8 +169,19 @@ Fields:
 - `temperature`: generation temperature.
 - `request_timeout`: timeout for one socket operation, in seconds.
 - `pump_interval_ms`: UI update interval, in milliseconds.
+- `stream_mode`: `preview`, `final`, or `buffer`. See below.
 - `system_prompt`: system prompt.
 - `instruction_defaults`: object mapping comma-separated extensions to default instruction text. Must contain a `default` key.
+
+### Streaming modes
+
+`stream_mode` controls how the replacement is applied:
+
+- `"preview"` (default): tokens update an inline phantom preview; the buffer is replaced once at the end. A single undo reverts the whole replacement.
+- `"final"`: tokens update only the progress hint; the buffer is replaced once at the end. A single undo reverts the whole replacement.
+- `"buffer"`: tokens are written into the buffer as they arrive. This gives the most direct typing effect, but each chunk is a separate undo step.
+
+Sublime Text does not provide a public API to group multiple buffer edits into one undo step. Use `"preview"` or `"final"` when single-step undo matters.
 
 ### Instruction defaults and history
 
@@ -221,7 +234,7 @@ In `.sublime-project`:
 
 Keys that are absent from the project settings are inherited from the global settings.
 
-`instruction_defaults` can also be overridden per project. The value replaces the global object as a whole.
+`instruction_defaults` and `stream_mode` can also be overridden per project. `instruction_defaults` replaces the global object as a whole.
 
 ### Environment variable API keys
 
@@ -253,8 +266,9 @@ Errors:
 ## Cancellation and undo
 
 - `Escape` during a stream stops generation.
-- The partial result is not removed.
-- The stream is written in batches, so a full rollback may require several `ctrl+z` presses.
+- In `preview` and `final` modes, the buffer is not modified until the stream completes. Cancelling or an error leaves the original text unchanged.
+- In `preview` and `final` modes, the final replacement is one edit, so one `ctrl+z` reverts it.
+- In `buffer` mode, chunks are written into the buffer, so a rollback may require several `ctrl+z` presses.
 - The generated region is selected after a successful completion.
 
 ## Error handling
@@ -272,6 +286,8 @@ The plugin reports these conditions in the status bar:
 - the model returns no content.
 
 If the buffer changes externally, the stream stops to avoid corrupting the text.
+
+In `preview` and `final` modes, errors and cancellation leave the original text unchanged. In `buffer` mode, partial text may remain.
 
 Full error details are written to the Sublime Text console. Open it with `View` > `Show Console`.
 

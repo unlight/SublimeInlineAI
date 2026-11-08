@@ -49,6 +49,7 @@ sublime.Region = FakeRegion
 sublime.Phantom = FakePhantom
 sublime.PhantomSet = FakePhantomSet
 sublime.LAYOUT_BELOW = 1
+sublime.LAYOUT_BLOCK = 2
 sublime.DRAW_SQUIGGLY_UNDERLINE = 2
 sublime.status_message = lambda message: None
 sublime.set_timeout = lambda callback, delay=0: None
@@ -110,9 +111,21 @@ class FakeBufferView:
     self.text = self.text[:begin] + text + self.text[end:]
 
 
+class FakeSelection:
+  def __init__(self):
+    self.regions = []
+
+  def clear(self):
+    self.regions = []
+
+  def add(self, region):
+    self.regions.append(region)
+
+
 class FakeIndicatorView:
   def __init__(self):
     self.regions = {}
+    self.selection = FakeSelection()
     self.change_count_value = 0
     self.valid = True
 
@@ -124,6 +137,12 @@ class FakeIndicatorView:
 
   def is_valid(self):
     return self.valid
+
+  def sel(self):
+    return self.selection
+
+  def show(self, point, surrounds):
+    pass
 
   def add_regions(self, key, regions, scope, icon, flags):
     self.regions[key] = {
@@ -167,6 +186,7 @@ def default_settings():
     "temperature": 0.1,
     "request_timeout": 60,
     "pump_interval_ms": 20,
+    "stream_mode": "buffer",
     "system_prompt": "prompt",
     "instruction_defaults": {
       "ts,js,mts,mjs,jsx,tsx": "Refactor code.",
@@ -258,6 +278,7 @@ class TestConfig(PluginTestCase):
     self.assertEqual(config["temperature"], 0.1)
     self.assertEqual(config["request_timeout"], 60)
     self.assertEqual(config["pump_interval_ms"], 20)
+    self.assertEqual(config["stream_mode"], "buffer")
     self.assertEqual(config["system_prompt"], "prompt")
     self.assertEqual(plugin._default_instruction(config, "ts"), "Refactor code.")
     self.assertEqual(plugin._default_instruction(config, "py"), "Improve text.")
@@ -280,6 +301,23 @@ class TestConfig(PluginTestCase):
     self.assertEqual(config["temperature"], 0.3)
     self.assertEqual(config["request_timeout"], 60)
     self.assertEqual(plugin._default_instruction(config, "ts"), "Refactor code.")
+
+  def test_stream_mode_default(self):
+    del self.settings["stream_mode"]
+    config = self.config()
+    self.assertEqual(config["stream_mode"], "preview")
+
+  def test_project_stream_mode(self):
+    config = self.config(project_data={
+      "settings": {"inline_ai": {"stream_mode": "final"}}
+    })
+    self.assertEqual(config["stream_mode"], "final")
+
+  def test_invalid_stream_mode(self):
+    self.settings["stream_mode"] = "weird"
+    with self.assertRaises(RuntimeError) as context:
+      self.config()
+    self.assertIn("stream_mode", str(context.exception))
 
   def test_project_instruction_defaults(self):
     config = self.config(project_data={
@@ -474,12 +512,13 @@ class TestInstructionHistory(PluginTestCase):
 
 
 class TestIndicator(PluginTestCase):
-  def make_session(self, region=None):
+  def make_session(self, region=None, stream_mode="buffer"):
     if region is None:
       region = FakeRegion(0, 5)
     view = FakeIndicatorView()
+    config = dict(self.config(), stream_mode=stream_mode)
     session = plugin._StreamSession(
-      view, region, "source", "instruction", 0, self.config()
+      view, region, "source", "instruction", 0, config
     )
     session.phantom_set = FakePhantomSet(view, "inline_ai")
     return view, session
@@ -521,6 +560,63 @@ class TestIndicator(PluginTestCase):
     session._clear_indicator()
     self.assertNotIn("inline_ai_target", view.regions)
     self.assertEqual(session.phantom_set.phantoms, [])
+
+  def test_preview_indicator(self):
+    view, session = self.make_session(FakeRegion(0, 5), "preview")
+    session._write("hello")
+    content = session.phantom_set.phantoms[0].content
+    self.assertIn("rewriting selected text", content)
+    self.assertIn("5 chars", content)
+    self.assertIn("hello", content)
+    self.assertEqual(session.generated_text, "hello")
+    self.assertIsNone(session.cursor)
+    phantom = session.phantom_set.phantoms[0]
+    self.assertEqual(phantom.layout, sublime.LAYOUT_BLOCK)
+    self.assertEqual(phantom.region.begin(), 0)
+    self.assertEqual(phantom.region.end(), 0)
+    highlight = view.regions["inline_ai_target"]["regions"][0]
+    self.assertEqual(highlight.begin(), 0)
+    self.assertEqual(highlight.end(), 5)
+
+  def test_final_indicator(self):
+    view, session = self.make_session(FakeRegion(0, 5), "final")
+    session._write("hello")
+    content = session.phantom_set.phantoms[0].content
+    self.assertIn("rewriting selected text", content)
+    self.assertIn("5 chars", content)
+    self.assertNotIn("hello", content)
+    self.assertEqual(session.generated_text, "hello")
+    self.assertIsNone(session.cursor)
+
+  def test_atomic_commit(self):
+    original = plugin._run_write
+    calls = []
+
+    def fake_run_write(view, begin, end, text):
+      calls.append((begin, end, text))
+      plugin._LAST_WRITE_END[0] = begin + len(text)
+      return plugin._LAST_WRITE_END[0]
+
+    plugin._run_write = fake_run_write
+    self.addCleanup(lambda: setattr(plugin, "_run_write", original))
+
+    view, session = self.make_session(FakeRegion(0, 5), "preview")
+    session._write("hello")
+    self.assertTrue(session._commit())
+    self.assertEqual(calls, [(0, 5, "hello")])
+    self.assertTrue(session.committed)
+    self.assertEqual(session.cursor, 5)
+    self.assertEqual(view.selection.regions[0].begin(), 0)
+    self.assertEqual(view.selection.regions[0].end(), 5)
+
+  def test_atomic_commit_without_content(self):
+    view, session = self.make_session(FakeRegion(0, 5), "preview")
+    self.assertFalse(session._commit())
+    self.assertFalse(session.committed)
+
+  def test_preview_html_escapes(self):
+    content = plugin._preview_html("hint", "<b>&")
+    self.assertIn("&lt;b&gt;&amp;", content)
 
   def test_indicator_html(self):
     html = plugin._indicator_html("hello")

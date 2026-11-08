@@ -1,3 +1,4 @@
+import html
 import json
 import os
 import queue
@@ -79,6 +80,7 @@ def _load_config(view):
   settings = sublime.load_settings(SETTINGS_FILE)
   config = {key: settings.get(key) for key in REQUIRED_SETTINGS}
   config["api_key"] = settings.get("api_key") or ""
+  config["stream_mode"] = settings.get("stream_mode") or "preview"
 
   overrides = _project_overrides(view)
   for key in REQUIRED_SETTINGS:
@@ -86,6 +88,8 @@ def _load_config(view):
       config[key] = overrides[key]
   if "api_key" in overrides:
     config["api_key"] = overrides["api_key"] or ""
+  if overrides.get("stream_mode"):
+    config["stream_mode"] = overrides["stream_mode"]
 
   missing = [key for key in REQUIRED_SETTINGS if config.get(key) is None]
   if missing:
@@ -100,6 +104,9 @@ def _load_config(view):
     raise RuntimeError("model must be non-empty")
   config["api_key"] = str(config["api_key"]).strip()
   config["system_prompt"] = str(config["system_prompt"])
+  config["stream_mode"] = str(config["stream_mode"]).strip().lower()
+  if config["stream_mode"] not in ("buffer", "preview", "final"):
+    raise RuntimeError("stream_mode must be buffer, preview, or final")
   config["instruction_defaults"] = _normalize_instruction_defaults(
     config["instruction_defaults"]
   )
@@ -425,6 +432,51 @@ def _indicator_html(text):
   """.format(text)
 
 
+def _pending_hint():
+  return (
+    "Inline AI: selected text will be rewritten. Waiting for the model... "
+    "Press Escape to cancel."
+  )
+
+
+def _rewriting_hint(generated):
+  return (
+    "Inline AI: rewriting selected text... {} chars. "
+    "Press Escape to cancel."
+  ).format(generated)
+
+
+def _preview_html(hint, generated_text):
+  preview = generated_text[-4000:]
+  lines = preview.splitlines()
+  if len(lines) > 10:
+    preview = "\n".join(lines[-10:])
+  if len(preview) < len(generated_text):
+    preview = "...\n" + preview
+  return """
+  <body id="inline-ai-preview">
+    <style>
+      .inline-ai-hint {{
+        font-size: 0.9em;
+        font-style: italic;
+        opacity: 0.75;
+        padding: 2px 6px;
+      }}
+      .inline-ai-preview {{
+        font-family: monospace;
+        white-space: pre-wrap;
+        margin-top: 4px;
+        padding-left: 6px;
+        border-left: 2px solid #888888;
+        opacity: 0.9;
+      }}
+    </style>
+    <div class="inline-ai-hint">{}</div>
+    <div class="inline-ai-preview">{}</div>
+  </body>
+  """.format(hint, html.escape(preview))
+
+
 class _StreamSession:
   def __init__(self, view, region, source_text, instruction, change_count, config):
     self.view = view
@@ -433,8 +485,11 @@ class _StreamSession:
     self.source_text = source_text
     self.instruction = instruction
     self.config = config
+    self.stream_mode = config["stream_mode"]
+    self.generated_text = ""
     self.cursor = None
     self.started = False
+    self.committed = False
     self.finished = False
     self.expected_change_count = change_count
     self.pump_interval_ms = config["pump_interval_ms"]
@@ -479,39 +534,74 @@ class _StreamSession:
     if not text:
       return
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    if not self.started:
-      self.cursor = _run_write(
-        self.view, self.region.begin(), self.region.end(), text
-      )
-      self.started = True
+    if self.stream_mode == "buffer":
+      if not self.started:
+        self.cursor = _run_write(
+          self.view, self.region.begin(), self.region.end(), text
+        )
+        self.started = True
+      else:
+        self.cursor = _run_write(self.view, self.cursor, self.cursor, text)
+      self.expected_change_count = self.view.change_count()
+      selection = self.view.sel()
+      selection.clear()
+      selection.add(sublime.Region(self.cursor))
+      self.view.show(self.cursor, True)
     else:
-      self.cursor = _run_write(self.view, self.cursor, self.cursor, text)
-
-    self.expected_change_count = self.view.change_count()
-    selection = self.view.sel()
-    selection.clear()
-    selection.add(sublime.Region(self.cursor))
-    self.view.show(self.cursor, True)
+      self.generated_text += text
+      self.started = True
     self._update_indicator()
+
+  def _commit(self):
+    if self.committed:
+      return True
+    if not self.generated_text:
+      return False
+    if not self._buffer_intact():
+      self._finish(error="buffer changed externally; stream stopped")
+      return False
+    try:
+      self.cursor = _run_write(
+        self.view, self.region.begin(), self.region.end(), self.generated_text
+      )
+      self.committed = True
+      self.expected_change_count = self.view.change_count()
+      selection = self.view.sel()
+      selection.clear()
+      selection.add(sublime.Region(self.region.begin(), self.cursor))
+      self.view.show(self.cursor, True)
+      return True
+    except Exception as exc:
+      self._finish(error=_describe_exception(exc))
+      return False
 
   def _update_indicator(self):
     if self.phantom_set is None:
       return
-    if self.started and self.cursor is not None:
-      region = sublime.Region(self.region.begin(), self.cursor)
-      phantom_region = sublime.Region(self.cursor, self.cursor)
-      generated = self.cursor - self.region.begin()
-      text = (
-        "Inline AI: rewriting selected text... {} chars. "
-        "Press Escape to cancel."
-      ).format(generated)
+    if self.stream_mode == "buffer":
+      if self.started and self.cursor is not None:
+        region = sublime.Region(self.region.begin(), self.cursor)
+        phantom_region = sublime.Region(self.cursor, self.cursor)
+        generated = self.cursor - self.region.begin()
+        layout = sublime.LAYOUT_BELOW
+        content = _indicator_html(_rewriting_hint(generated))
+      else:
+        region = self.region
+        phantom_region = sublime.Region(self.region.begin(), self.region.begin())
+        layout = sublime.LAYOUT_BELOW
+        content = _indicator_html(_pending_hint())
     else:
       region = self.region
       phantom_region = sublime.Region(self.region.begin(), self.region.begin())
-      text = (
-        "Inline AI: selected text will be rewritten. Waiting for the model... "
-        "Press Escape to cancel."
-      )
+      layout = sublime.LAYOUT_BLOCK
+      if self.started:
+        hint = _rewriting_hint(len(self.generated_text))
+        if self.stream_mode == "preview":
+          content = _preview_html(hint, self.generated_text)
+        else:
+          content = _indicator_html(hint)
+      else:
+        content = _indicator_html(_pending_hint())
     self.view.add_regions(
       "inline_ai_target",
       [region],
@@ -520,7 +610,7 @@ class _StreamSession:
       sublime.DRAW_SQUIGGLY_UNDERLINE,
     )
     self.phantom_set.update([
-      sublime.Phantom(phantom_region, _indicator_html(text), sublime.LAYOUT_BELOW)
+      sublime.Phantom(phantom_region, content, layout)
     ])
 
   def _clear_indicator(self):
@@ -535,6 +625,9 @@ class _StreamSession:
       return
     if not self.view.is_valid():
       self._finish(error="view was closed")
+      return
+    if self.stream_mode != "buffer" and not self._buffer_intact():
+      self._finish(error="buffer changed externally; stream stopped")
       return
 
     pending = []
@@ -564,6 +657,9 @@ class _StreamSession:
       self._finish(error=error)
       return
     if done:
+      if self.stream_mode != "buffer" and self.generated_text:
+        if not self._commit():
+          return
       self._finish()
       return
 
