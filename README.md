@@ -25,25 +25,45 @@ Stream selected text or code through an OpenAI-compatible API and replace the se
 
 ## Installation
 
-### Symlink
+Package Control is not available yet. Install directly from the repository with `git clone`.
+
+### Linux
 
 ```bash
-ln -s /path/to/SublimeInlineAI ~/.config/sublime-text/Packages/InlineAI
+cd "$HOME/.config/sublime-text/Packages"
+git clone https://github.com/unlight/SublimeInlineAI.git InlineAI
 ```
 
-Restart Sublime Text after creating the symlink.
+### macOS
 
-### Copy
+```bash
+cd "$HOME/Library/Application Support/Sublime Text/Packages"
+git clone https://github.com/unlight/SublimeInlineAI.git InlineAI
+```
 
-Copy these files to `Packages/User/`:
+### Windows
 
-- `inline_ai.py`
-- `InlineAI.sublime-settings`
-- `Default.sublime-keymap`
+```bat
+cd "%APPDATA%\Sublime Text\Packages"
+git clone https://github.com/unlight/SublimeInlineAI.git InlineAI
+```
 
-Do not overwrite an existing `Packages/User/Default.sublime-keymap`. Add the entries to the existing file.
+Remove or rename an existing `Packages/InlineAI` directory or symlink before cloning.
 
-When installed as a separate package in `Packages/InlineAI/`, `InlineAI.sublime-settings` is the package default. User overrides belong in `Packages/User/InlineAI.sublime-settings`.
+Restart Sublime Text after cloning.
+
+### Update
+
+```bash
+cd "<packages-path>/InlineAI"
+git pull
+```
+
+Replace `<packages-path>` with the path used during installation.
+
+### Settings
+
+Package defaults are in `Packages/InlineAI/InlineAI.sublime-settings`. User overrides belong in `Packages/User/InlineAI.sublime-settings`.
 
 ## Usage
 
