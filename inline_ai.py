@@ -13,6 +13,7 @@ import sublime_plugin
 
 
 SETTINGS_FILE = "InlineAI.sublime-settings"
+TARGET_REGION_KEY = "inline_ai_target"
 CONFIG_KEY = "inline_ai"
 REQUIRED_SETTINGS = (
   "api_url",
@@ -566,10 +567,6 @@ class _StreamSession:
       )
       self.committed = True
       self.expected_change_count = self.view.change_count()
-      selection = self.view.sel()
-      selection.clear()
-      selection.add(sublime.Region(self.region.begin(), self.cursor))
-      self.view.show(self.cursor, True)
       return True
     except Exception as exc:
       self._finish(error=_describe_exception(exc))
@@ -603,7 +600,7 @@ class _StreamSession:
       else:
         content = _indicator_html(_pending_hint())
     self.view.add_regions(
-      "inline_ai_target",
+      TARGET_REGION_KEY,
       [region],
       "region.yellowish",
       "",
@@ -616,7 +613,7 @@ class _StreamSession:
   def _clear_indicator(self):
     if not self.view.is_valid():
       return
-    self.view.erase_regions("inline_ai_target")
+    self.view.erase_regions(TARGET_REGION_KEY)
     if self.phantom_set is not None:
       self.phantom_set.update([])
 
@@ -680,7 +677,7 @@ class _StreamSession:
           self.view.change_count() == self.expected_change_count):
         selection = self.view.sel()
         selection.clear()
-        selection.add(sublime.Region(self.region.begin(), self.cursor))
+        selection.add(sublime.Region(self.cursor))
         self.view.show(self.cursor, False)
 
     if error:
@@ -774,3 +771,9 @@ class InlineAICancelCommand(sublime_plugin.TextCommand):
     session = _SESSIONS.get(self.view.id())
     if session is not None:
       session.cancel()
+
+
+class InlineAIEventListener(sublime_plugin.EventListener):
+  def on_text_command(self, view, command_name, args):
+    if command_name in ("undo", "soft_undo", "redo", "soft_redo"):
+      view.erase_regions(TARGET_REGION_KEY)

@@ -76,7 +76,7 @@ Package defaults are in `Packages/InlineAI/InlineAI.sublime-settings`. User over
 4. Press `Enter`.
 5. The replacement is applied according to `stream_mode`: an inline preview (default), a progress hint, or direct buffer streaming.
 6. Press `Escape` to cancel an active stream.
-7. The generated region is selected when streaming completes.
+7. The cursor is placed at the end of the generated text when streaming completes.
 
 ## Key bindings
 
@@ -269,7 +269,7 @@ Errors:
 - In `preview` and `final` modes, the buffer is not modified until the stream completes. Cancelling or an error leaves the original text unchanged.
 - In `preview` and `final` modes, the final replacement is one edit, so one `ctrl+z` reverts it.
 - In `buffer` mode, chunks are written into the buffer, so a rollback may require several `ctrl+z` presses.
-- The generated region is selected after a successful completion.
+- The cursor is placed at the end of the generated text after a successful completion.
 
 ## Error handling
 

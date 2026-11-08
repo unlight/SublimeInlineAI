@@ -57,6 +57,7 @@ sys.modules["sublime"] = sublime
 
 sublime_plugin = types.ModuleType("sublime_plugin")
 sublime_plugin.TextCommand = type("TextCommand", (object,), {})
+sublime_plugin.EventListener = type("EventListener", (object,), {})
 sys.modules["sublime_plugin"] = sublime_plugin
 
 spec = importlib.util.spec_from_file_location(
@@ -72,6 +73,9 @@ class FakeSettings:
 
   def get(self, key, default=None):
     return self.data.get(key, default)
+
+  def erase(self, key):
+    self.data.pop(key, None)
 
 
 class FakeWindow:
@@ -142,6 +146,12 @@ class FakeIndicatorView:
     return self.selection
 
   def show(self, point, surrounds):
+    pass
+
+  def settings(self):
+    return FakeSettings({})
+
+  def erase_status(self, key):
     pass
 
   def add_regions(self, key, regions, scope, icon, flags):
@@ -606,8 +616,12 @@ class TestIndicator(PluginTestCase):
     self.assertEqual(calls, [(0, 5, "hello")])
     self.assertTrue(session.committed)
     self.assertEqual(session.cursor, 5)
-    self.assertEqual(view.selection.regions[0].begin(), 0)
+    self.assertEqual(view.selection.regions, [])
+    session._finish()
+    self.assertEqual(view.selection.regions[0].begin(), 5)
     self.assertEqual(view.selection.regions[0].end(), 5)
+    self.assertNotIn("inline_ai_target", view.regions)
+    self.assertEqual(session.phantom_set.phantoms, [])
 
   def test_atomic_commit_without_content(self):
     view, session = self.make_session(FakeRegion(0, 5), "preview")
@@ -689,6 +703,22 @@ class TestStreamWorker(PluginTestCase):
     messages = drain(q)
     self.assertEqual(messages[-1][0], "error")
     self.assertIn("boom", messages[-1][1])
+
+
+class TestEventListener(unittest.TestCase):
+  def test_undo_clears_target_region(self):
+    view = FakeIndicatorView()
+    view.regions[plugin.TARGET_REGION_KEY] = {}
+    listener = plugin.InlineAIEventListener()
+    listener.on_text_command(view, "undo", None)
+    self.assertNotIn(plugin.TARGET_REGION_KEY, view.regions)
+
+  def test_other_commands_keep_target_region(self):
+    view = FakeIndicatorView()
+    view.regions[plugin.TARGET_REGION_KEY] = {}
+    listener = plugin.InlineAIEventListener()
+    listener.on_text_command(view, "insert", None)
+    self.assertIn(plugin.TARGET_REGION_KEY, view.regions)
 
 
 class TestPackagedFiles(unittest.TestCase):
