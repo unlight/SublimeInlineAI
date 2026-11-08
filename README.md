@@ -11,7 +11,7 @@ Stream selected text or code through an OpenAI-compatible API and replace the se
 - Buffer updates run on the main thread through `sublime.set_timeout`.
 - Standard library only, no third-party dependencies.
 - One OpenAI-compatible endpoint, configurable globally or per project.
-- Extension-specific default instructions and per-extension history.
+- Extension-specific defaults and per-file instruction history.
 - Global, user, and project-specific settings.
 - API keys from environment variables.
 - `Escape` cancels an active stream.
@@ -70,7 +70,7 @@ Package defaults are in `Packages/InlineAI/InlineAI.sublime-settings`. User over
 
 1. Select text or code.
 2. Press `ctrl+enter`.
-3. The panel is prefilled with the last instruction for this extension in the current session, or with the extension default. Edit it or replace it.
+3. The panel is prefilled with the last instruction for this file, the closest known file, or the extension default. Edit it or replace it.
 4. Press `Enter`.
 5. The selection is replaced as tokens arrive.
 6. Press `Escape` to cancel an active stream.
@@ -173,9 +173,13 @@ Fields:
 
 `instruction_defaults` maps comma-separated file extensions to the text that prefills the instruction panel. Matching is case-insensitive. The `default` key is required and is used when no extension group matches. A file without an extension uses the `default` group.
 
-The last submitted instruction is kept in memory per exact extension for the current Sublime Text session. The next time the instruction panel opens for the same extension, that text is used instead of the default. Restarting Sublime Text clears the history.
+The last submitted instruction is kept in memory per file path for the current Sublime Text session.
 
-History is per exact extension. Defaults can group several extensions.
+If the current file has a history entry, that text is used. Otherwise, the plugin selects the stored file with the longest common leading path prefix. Ties use the most recently used file. If there is no history, the extension default is used.
+
+Files without a path (untitled views) do not store history and use the extension default.
+
+History is per file path. Defaults can group several extensions. Restarting Sublime Text clears the history.
 
 ### User overrides
 
@@ -277,6 +281,7 @@ inline_ai.py                    main plugin
 InlineAI.sublime-settings       default package settings
 Default.sublime-keymap          key bindings
 README.md                       documentation
+tests/                          unit tests
 ```
 
 ## Verification
@@ -285,6 +290,7 @@ README.md                       documentation
 python3 -m py_compile inline_ai.py
 python3 -m json.tool InlineAI.sublime-settings
 python3 -m json.tool Default.sublime-keymap
+python3 -m unittest discover -s tests -v
 ```
 
 After restarting Sublime Text:

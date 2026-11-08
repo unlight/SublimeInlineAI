@@ -27,6 +27,7 @@ REQUIRED_SETTINGS = (
 _SESSIONS = {}
 _LAST_WRITE_END = [0]
 _LAST_INSTRUCTIONS = {}
+_LAST_INSTRUCTION_ORDER = []
 
 
 def _project_overrides(view):
@@ -125,8 +126,44 @@ def _file_extension(view):
     return extension or "default"
 
 
-def _save_last_instruction(extension, instruction):
-    _LAST_INSTRUCTIONS[extension] = instruction
+def _file_key(view):
+    file_name = view.file_name()
+    if not file_name:
+        return None
+    return os.path.normcase(os.path.normpath(file_name))
+
+
+def _common_prefix_length(first, second):
+    limit = min(len(first), len(second))
+    index = 0
+    while index < limit and first[index] == second[index]:
+        index += 1
+    return index
+
+
+def _closest_instruction(file_key):
+    if file_key in _LAST_INSTRUCTIONS:
+        return _LAST_INSTRUCTIONS[file_key]
+
+    best_instruction = None
+    best_prefix = -1
+    for key in reversed(_LAST_INSTRUCTION_ORDER):
+        if key not in _LAST_INSTRUCTIONS:
+            continue
+        prefix = _common_prefix_length(file_key, key)
+        if prefix > best_prefix:
+            best_instruction = _LAST_INSTRUCTIONS[key]
+            best_prefix = prefix
+    return best_instruction
+
+
+def _save_last_instruction(file_key, instruction):
+    if not file_key:
+        return
+    _LAST_INSTRUCTIONS[file_key] = instruction
+    if file_key in _LAST_INSTRUCTION_ORDER:
+        _LAST_INSTRUCTION_ORDER.remove(file_key)
+    _LAST_INSTRUCTION_ORDER.append(file_key)
 
 
 def _default_instruction(config, extension):
@@ -134,10 +171,11 @@ def _default_instruction(config, extension):
     return defaults["extensions"].get(extension, defaults["default"])
 
 
-def _initial_instruction(extension, config):
-    saved = _LAST_INSTRUCTIONS.get(extension)
-    if saved:
-        return saved
+def _initial_instruction(file_key, extension, config):
+    if file_key:
+        saved = _closest_instruction(file_key)
+        if saved:
+            return saved
     return _default_instruction(config, extension)
 
 
@@ -533,13 +571,14 @@ class InlineAICommand(sublime_plugin.TextCommand):
             existing.cancel()
 
         extension = _file_extension(self.view)
-        initial_instruction = _initial_instruction(extension, config)
+        file_key = _file_key(self.view)
+        initial_instruction = _initial_instruction(file_key, extension, config)
 
         window.show_input_panel(
             "Inline AI instruction:",
             initial_instruction,
             lambda instruction: self._on_instruction(
-                region, source_text, instruction, change_count, config, extension
+                region, source_text, instruction, change_count, config, file_key
             ),
             None,
             None,
@@ -551,7 +590,7 @@ class InlineAICommand(sublime_plugin.TextCommand):
                 return sublime.Region(region.begin(), region.end())
         return None
 
-    def _on_instruction(self, region, source_text, instruction, change_count, config, extension):
+    def _on_instruction(self, region, source_text, instruction, change_count, config, file_key):
         instruction = instruction.strip()
         if not instruction:
             sublime.status_message("Inline AI: instruction is empty")
@@ -562,7 +601,7 @@ class InlineAICommand(sublime_plugin.TextCommand):
             sublime.status_message("Inline AI: buffer changed; try again")
             return
 
-        _save_last_instruction(extension, instruction)
+        _save_last_instruction(file_key, instruction)
 
         existing = _SESSIONS.get(self.view.id())
         if existing is not None:
