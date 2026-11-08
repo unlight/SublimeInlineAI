@@ -3,8 +3,10 @@
 # Keymap: loaded from this package automatically
 # User overrides: Packages/User/InlineAI.sublime-settings
 # Project overrides: .sublime-project -> settings.inline_ai
+# API keys: literal value or {env:VARIABLE_NAME}
 
 import json
+import os
 import queue
 import socket
 import threading
@@ -105,6 +107,20 @@ def _model_label(model):
     return "{} @ {}".format(model["model"], model["api_url"])
 
 
+def _resolve_api_key(value):
+    if value.startswith("{env:"):
+        if not value.endswith("}"):
+            raise RuntimeError("invalid api_key environment reference: " + value)
+        name = value[5:-1].strip()
+        if not name:
+            raise RuntimeError("empty environment variable name in api_key")
+        env_value = os.environ.get(name)
+        if env_value is None:
+            raise RuntimeError("api_key environment variable {} is not set".format(name))
+        return env_value.strip()
+    return value
+
+
 def _build_headers(model):
     headers = {
         "Content-Type": "application/json",
@@ -112,7 +128,7 @@ def _build_headers(model):
         "Cache-Control": "no-cache",
         "User-Agent": "SublimeInlineAI/1.0",
     }
-    api_key = model["api_key"]
+    api_key = _resolve_api_key(model["api_key"])
     if api_key:
         token = api_key
         if not token.lower().startswith("bearer "):
